@@ -1,0 +1,23 @@
+# Build directory
+build/
+
+# Log files
+*.log
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Object files
+*.o
+*.obj
+
+# Executable files
+sync-tool
+
+# Progress files
+.sync_progress

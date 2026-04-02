@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cstring>
+#include <errno.h>
 
 AsyncIOHandler::AsyncIOHandler() : epollFd(-1), running(false) {
     epollFd = epoll_create1(0);
@@ -101,16 +102,19 @@ void AsyncIOHandler::ioThread() {
             if (events[i].events & EPOLLIN) {
                 // 处理可读事件
                 char buffer[4096];
-                ssize_t n = read(fd, buffer, sizeof(buffer));
-                if (n > 0) {
+                ssize_t n;
+                // 循环读取所有可用数据（ET模式需要这样做）
+                while ((n = read(fd, buffer, sizeof(buffer))) > 0) {
                     auto it = readCallbacks.find(fd);
                     if (it != readCallbacks.end()) {
                         it->second(fd, buffer, n);
                     }
-                } else if (n == 0) {
+                }
+                if (n == 0) {
                     // 连接关闭
                     remove(fd);
                 }
+                // n < 0 且 errno == EAGAIN 是正常的，说明数据已读完
             }
             
             if (events[i].events & EPOLLOUT) {

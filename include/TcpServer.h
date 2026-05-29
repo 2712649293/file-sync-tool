@@ -30,6 +30,8 @@ public:
     
     // 检查服务器状态
     bool isRunning() const;
+
+    int getServerSocket() const;
     
     // 心跳检测
     bool sendHeartbeat(int clientSock);

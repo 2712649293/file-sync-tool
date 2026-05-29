@@ -3,6 +3,10 @@
 #include <mutex>
 #include <atomic>
 
+/**
+ * @brief SyncManager 构造函数
+ * @details 初始化同步管理器，创建线程池、异步IO处理器和文件同步器
+ */
 SyncManager::SyncManager() : 
     threadPool(nullptr), 
     asyncIOHandler(nullptr), 
@@ -12,6 +16,10 @@ SyncManager::SyncManager() :
     completedTasks(0) {
 }
 
+/**
+ * @brief SyncManager 析构函数
+ * @details 停止所有组件并释放资源
+ */
 SyncManager::~SyncManager() {
     stop();
     delete threadPool;
@@ -19,14 +27,27 @@ SyncManager::~SyncManager() {
     delete fileSync;
 }
 
+/**
+ * @brief 初始化同步管理器
+ * @param threadCount 线程池大小
+ */
 void SyncManager::init(size_t threadCount) {
     threadPool = new ThreadPool(threadCount);
     asyncIOHandler = new AsyncIOHandler();
     fileSync = new FileSync();
+    fileSync->setThreadPool(threadPool);
+    fileSync->setAsyncIOHandler(asyncIOHandler);
     asyncIOHandler->start();
     LogUtil::info("SyncManager initialized");
 }
 
+/**
+ * @brief 执行本地同步
+ * @param srcDir 源目录路径
+ * @param destDir 目标目录路径
+ * @param recursive 是否递归同步（当前未使用，始终递归）
+ * @return 同步成功返回true，否则返回false
+ */
 bool SyncManager::syncLocal(const std::string& srcDir, const std::string& destDir, bool recursive) {
     LogUtil::info("Starting local sync: " + srcDir + " -> " + destDir);
     syncing = true;
@@ -40,7 +61,7 @@ bool SyncManager::syncLocal(const std::string& srcDir, const std::string& destDi
         
         LogUtil::info("Generated " + std::to_string(totalTasks) + " sync tasks");
         
-        // 提交任务到线程池
+        // 提交任务到线程池并行处理
         for (const auto& task : tasks) {
             threadPool->submit(&SyncManager::processSyncTask, this, task);
         }
@@ -58,6 +79,14 @@ bool SyncManager::syncLocal(const std::string& srcDir, const std::string& destDi
     }
 }
 
+/**
+ * @brief 执行远程同步
+ * @param srcDir 源目录路径
+ * @param destDir 目标目录路径（相对于远程服务器）
+ * @param host 远程主机IP地址
+ * @param port 远程主机端口
+ * @return 同步成功返回true，否则返回false
+ */
 bool SyncManager::syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port) {
     LogUtil::info("Starting remote sync: " + srcDir + " -> " + host + ":" + std::to_string(port) + destDir);
     syncing = true;
@@ -82,6 +111,12 @@ bool SyncManager::syncRemote(const std::string& srcDir, const std::string& destD
     }
 }
 
+/**
+ * @brief 从断点续传
+ * @param srcPath 源文件路径
+ * @param destPath 目标文件路径
+ * @return 续传成功返回true，否则返回false
+ */
 bool SyncManager::resumeSync(const std::string& srcPath, const std::string& destPath) {
     LogUtil::info("Resuming sync: " + srcPath + " -> " + destPath);
     
@@ -99,6 +134,10 @@ bool SyncManager::resumeSync(const std::string& srcPath, const std::string& dest
     }
 }
 
+/**
+ * @brief 处理单个同步任务
+ * @param task 同步任务
+ */
 void SyncManager::processSyncTask(const SyncTask& task) {
     try {
         fileSync->executeSyncTask(task);
@@ -109,6 +148,9 @@ void SyncManager::processSyncTask(const SyncTask& task) {
     }
 }
 
+/**
+ * @brief 更新同步进度
+ */
 void SyncManager::updateProgress() {
     if (totalTasks > 0) {
         double progress = static_cast<double>(completedTasks) / totalTasks * 100;
@@ -116,6 +158,10 @@ void SyncManager::updateProgress() {
     }
 }
 
+/**
+ * @brief 设置传输速率限制
+ * @param limit 速率限制（字节/秒）
+ */
 void SyncManager::setSpeedLimit(size_t limit) {
     if (fileSync) {
         fileSync->setSpeedLimit(limit);
@@ -123,6 +169,10 @@ void SyncManager::setSpeedLimit(size_t limit) {
     }
 }
 
+/**
+ * @brief 设置冲突处理策略
+ * @param strategy 冲突处理策略（overwrite/skip/rename）
+ */
 void SyncManager::setConflictStrategy(const std::string& strategy) {
     if (fileSync) {
         fileSync->setConflictStrategy(strategy);
@@ -130,12 +180,20 @@ void SyncManager::setConflictStrategy(const std::string& strategy) {
     }
 }
 
+/**
+ * @brief 设置线程池大小
+ * @param size 线程池大小
+ */
 void SyncManager::setThreadPoolSize(size_t size) {
     if (threadPool) {
         threadPool->setThreadCount(size);
     }
 }
 
+/**
+ * @brief 获取同步进度
+ * @return 同步进度百分比（0-100）
+ */
 double SyncManager::getSyncProgress() const {
     if (totalTasks == 0) {
         return 0.0;
@@ -143,6 +201,9 @@ double SyncManager::getSyncProgress() const {
     return static_cast<double>(completedTasks) / totalTasks * 100;
 }
 
+/**
+ * @brief 停止同步管理器
+ */
 void SyncManager::stop() {
     syncing = false;
     if (threadPool) {
@@ -154,6 +215,10 @@ void SyncManager::stop() {
     LogUtil::info("SyncManager stopped");
 }
 
+/**
+ * @brief 检查是否正在同步
+ * @return 正在同步返回true，否则返回false
+ */
 bool SyncManager::isSyncing() const {
     return syncing;
 }

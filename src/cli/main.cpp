@@ -192,14 +192,13 @@ int main(int argc, char* argv[]) {
 
     // 执行同步操作
     bool success = false;
-    if (resume) {
-        // 断点续传模式
+    if (resume && remoteSync) {
+        success = syncManager.syncRemote(source, destination, host, port, true);
+    } else if (resume) {
         success = syncManager.resumeSync(source, destination);
     } else if (remoteSync) {
-        // 远程同步模式
         success = syncManager.syncRemote(source, destination, host, port);
     } else {
-        // 本地同步模式
         success = syncManager.syncLocal(source, destination);
     }
 

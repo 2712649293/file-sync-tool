@@ -25,8 +25,8 @@
 ### 步骤 1：克隆仓库
 
 ```bash
-git clone https://github.com/yourusername/sync-tool.git
-cd sync-tool
+git clone https://github.com/2712649293/file-sync-tool.git
+cd file-sync-tool
 ```
 
 ### 步骤 2：编译
@@ -47,9 +47,8 @@ sudo make install
 ### 步骤 4：运行测试
 
 ```bash
-# 返回项目根目录
 cd ..
-./test/test_sync.sh
+./test/test_all.sh
 ```
 
 ## 使用方法
@@ -103,6 +102,9 @@ sync-tool -s /path/to/source -d /path/to/destination -h 192.168.1.100 -p 8888
 
 # 同步到远程主机，使用 16 个线程
 sync-tool -s /path/to/source -d /path/to/destination -h 192.168.1.100 -p 8888 -t 16
+
+# 远程同步 + 断点续传（传输中断后重新运行即可从断点继续）
+sync-tool -s /path/to/source -d /path/to/destination -h 192.168.1.100 -p 8888 -r
 ```
 
 #### 3. 断点续传
@@ -176,6 +178,8 @@ sync-tool/
 
 - 记录同步进度到 `.sync_progress` 文件（包含文件路径、已传输偏移量、总大小）
 - 重启后读取进度文件，从断点处继续传输
+- **本地续传**：文件写入中断时自动保存偏移量，下次启动从断点继续写入
+- **远程续传**：客户端保存每个目标文件的传输进度，与服务端协商偏移量，服务端以追加模式接续写入
 - 支持大文件（10GB+）分片传输（默认分片大小 1MB）
 
 ### 3. 多线程异步
@@ -221,6 +225,84 @@ sync-tool/
 - 开发环境文件同步
 - 轻量级云存储同步
 - 大文件跨主机传输
+
+## 测试
+
+项目提供综合测试脚本 `test/test_all.sh`，覆盖所有核心功能：
+
+```bash
+./test/test_all.sh
+```
+
+### 测试覆盖
+
+| # | 测试项 | 说明 |
+|---|--------|------|
+| 1 | 本地同步 | 文件和嵌套子目录同步 |
+| 2 | 增量同步 | 修改文件更新、新增文件添加、未变更文件保持 |
+| 3 | 断点续传 | 10MB 文件模拟中断后从 5MB 处续传，MD5 完整性校验 |
+| 4 | 冲突策略 | skip 保留已有 / overwrite 覆盖 / rename 备份 |
+| 5 | 速率限制 | 验证 512KB/s 限速生效 |
+| 6 | 远程同步 | TCP 客户端-服务端文件传输 |
+| 7 | 远程断点续传 | 远程传输 MD5 完整性校验 |
+| 8 | 错误处理 | 缺参数、不存在的源目录 |
+| 9 | 大文件 | 15MB 文件触发异步 IO 路径，MD5 校验 |
+| 10 | CLI | --help / --version |
+
+### 最新测试结果
+
+```
+==============================================
+  sync-tool Comprehensive Test
+==============================================
+
+--- 1. Local Sync ---
+  [PASS] f1.txt synced
+  [PASS] sub/f2.txt synced
+  [PASS] no stale progress file
+
+--- 2. Incremental Sync ---
+  [PASS] modified file updated
+  [PASS] new file added
+  [PASS] unchanged file intact
+
+--- 3. Resume ---
+  [PASS] resume size correct (10485760)
+  [PASS] resume MD5 ok
+
+--- 4. Conflict ---
+  [PASS] skip preserved
+  [PASS] overwrite replaced
+  [PASS] rename backup
+
+--- 5. Speed Limit ---
+  [PASS] speed limit active
+
+--- 6. Remote Sync ---
+  [PASS] server started
+  [PASS] client ok
+  [PASS] r1.txt received
+  [PASS] sub/r2.txt received
+
+--- 7. Remote Resume ---
+  [PASS] server2 started
+  [PASS] remote MD5 ok
+
+--- 8. Error Handling ---
+  [PASS] no args fails
+  [PASS] bad src handles gracefully
+
+--- 9. Large File ---
+  [PASS] 15MB file MD5 ok
+
+--- 10. CLI ---
+  [PASS] --help works
+  [PASS] --version works
+
+==============================================
+  Results: 23 passed, 0 failed
+==============================================
+```
 
 ## 许可证
 

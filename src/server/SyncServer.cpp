@@ -222,7 +222,14 @@ bool SyncServer::handleClient(int clientSock) {
         std::string fullDestPath = baseDirectory + task.destPath;
 
         if (task.isDirectory) {
-            // 创建目录
+            off_t dummyResume = 0;
+            if (!receiveOffT(clientSock, dummyResume)) {
+                LogUtil::error("Failed to receive resume offset for directory: " + fullDestPath);
+                sendAck(clientSock, false);
+                tcpServer->closeClient(clientSock);
+                return false;
+            }
+
             if (!LinuxFileUtil::createDirectory(fullDestPath, task.mode)) {
                 LogUtil::error("Failed to create directory: " + fullDestPath);
                 sendAck(clientSock, false);
@@ -231,7 +238,19 @@ bool SyncServer::handleClient(int clientSock) {
             }
             LogUtil::info("Created directory: " + fullDestPath);
         } else {
-            // 确保目标目录存在
+            off_t resumeOffset = 0;
+            if (!receiveOffT(clientSock, resumeOffset)) {
+                LogUtil::error("Failed to receive resume offset for: " + fullDestPath);
+                sendAck(clientSock, false);
+                tcpServer->closeClient(clientSock);
+                return false;
+            }
+
+            if (resumeOffset > 0) {
+                LogUtil::info("Resuming file from offset " + std::to_string(resumeOffset) +
+                              ": " + fullDestPath);
+            }
+
             size_t lastSlash = fullDestPath.find_last_of('/');
             if (lastSlash != std::string::npos) {
                 std::string destDir = fullDestPath.substr(0, lastSlash);
@@ -243,18 +262,17 @@ bool SyncServer::handleClient(int clientSock) {
                 }
             }
 
-            // 接收文件数据
-            if (!receiveFileData(clientSock, task)) {
+            if (!receiveFileData(clientSock, task, resumeOffset)) {
                 LogUtil::error("Failed to receive file data: " + fullDestPath);
                 sendAck(clientSock, false);
                 tcpServer->closeClient(clientSock);
                 return false;
             }
 
-            // 设置文件权限
             LinuxFileUtil::setFileMode(fullDestPath, task.mode);
             LogUtil::info("Received file: " + fullDestPath +
-                          " (" + std::to_string(task.fileSize) + " bytes)");
+                          " (" + std::to_string(task.fileSize) + " bytes)" +
+                          (resumeOffset > 0 ? " [resumed from offset " + std::to_string(resumeOffset) + "]" : ""));
         }
 
         processedTasks.fetch_add(1);
@@ -335,29 +353,49 @@ bool SyncServer::receiveTaskMetadata(int clientSock, int taskCount,
  * @brief 接收文件数据
  * @param clientSock 客户端socket文件描述符
  * @param task 同步任务（包含目标路径和文件大小）
+ * @param resumeOffset 续传偏移量（0表示从头传输）
  * @return 接收成功返回true，否则返回false
  */
-bool SyncServer::receiveFileData(int clientSock, const ServerSyncTask& task) {
+bool SyncServer::receiveFileData(int clientSock, const ServerSyncTask& task, off_t resumeOffset) {
     std::string fullDestPath = baseDirectory + task.destPath;
 
-    // 创建目标文件
-    int destFd = open(fullDestPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int openFlags = O_WRONLY | O_CREAT;
+    if (resumeOffset > 0) {
+        openFlags |= O_APPEND;
+    } else {
+        openFlags |= O_TRUNC;
+    }
+    int destFd = open(fullDestPath.c_str(), openFlags, 0644);
     if (destFd < 0) {
         LogUtil::error("Failed to open destination file: " + fullDestPath +
                        " (" + std::strerror(errno) + ")");
         return false;
     }
 
+    if (resumeOffset > 0) {
+        off_t currentSize = lseek(destFd, 0, SEEK_END);
+        if (currentSize != resumeOffset) {
+            LogUtil::warn("Resume offset mismatch: expected " + std::to_string(resumeOffset) +
+                          ", actual " + std::to_string(currentSize) +
+                          ", restarting from beginning");
+            close(destFd);
+            destFd = open(fullDestPath.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (destFd < 0) {
+                LogUtil::error("Failed to reopen destination file: " + fullDestPath);
+                return false;
+            }
+            resumeOffset = 0;
+        }
+    }
+
     const size_t bufferSize = 64 * 1024;
     char buffer[bufferSize];
-    off_t received = 0;
+    off_t received = resumeOffset;
 
-    // 循环接收文件数据
     while (received < task.fileSize) {
         size_t bytesToReceive = std::min(bufferSize,
             static_cast<size_t>(task.fileSize - received));
 
-        // 使用健壮的read函数（处理EINTR）
         ssize_t n = robustRead(clientSock, buffer, bytesToReceive);
         if (n <= 0) {
             LogUtil::error("Failed to receive file data at offset " +
@@ -366,13 +404,12 @@ bool SyncServer::receiveFileData(int clientSock, const ServerSyncTask& task) {
             return false;
         }
 
-        // 写入文件
         ssize_t totalWritten = 0;
         const char* ptr = buffer;
         while (totalWritten < n) {
             ssize_t written = write(destFd, ptr + totalWritten, n - totalWritten);
             if (written < 0) {
-                if (errno == EINTR) continue;  // 信号中断，重试
+                if (errno == EINTR) continue;
                 LogUtil::error("Failed to write file data: " + std::string(std::strerror(errno)));
                 close(destFd);
                 return false;

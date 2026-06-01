@@ -85,17 +85,18 @@ bool SyncManager::syncLocal(const std::string& srcDir, const std::string& destDi
  * @param destDir 目标目录路径（相对于远程服务器）
  * @param host 远程主机IP地址
  * @param port 远程主机端口
+ * @param resume 是否启用断点续传
  * @return 同步成功返回true，否则返回false
  */
-bool SyncManager::syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port) {
-    LogUtil::info("Starting remote sync: " + srcDir + " -> " + host + ":" + std::to_string(port) + destDir);
+bool SyncManager::syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port, bool resume) {
+    LogUtil::info("Starting remote sync: " + srcDir + " -> " + host + ":" + std::to_string(port) + destDir +
+                  (resume ? " (resume enabled)" : ""));
     syncing = true;
     totalTasks = 0;
     completedTasks = 0;
     
     try {
-        // 使用FileSync的远程同步功能
-        bool result = fileSync->syncRemote(srcDir, destDir, host, port);
+        bool result = fileSync->syncRemote(srcDir, destDir, host, port, resume);
         
         syncing = false;
         if (result) {

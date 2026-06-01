@@ -213,57 +213,40 @@ bool FileSync::syncLocal(const std::string& srcDir, const std::string& destDir, 
  * @param destDir 目标目录路径
  * @param host 远程主机IP地址
  * @param port 远程主机端口
+ * @param resume 是否启用断点续传
  * @return 同步成功返回true，否则返回false
  */
-bool FileSync::syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port) {
-    LogUtil::info("Starting remote sync: " + srcDir + " -> " + host + ":" + std::to_string(port) + destDir);
-    
-    // 这里需要实现远程同步逻辑
-    // 1. 连接到远程服务器
-    // 2. 发送同步任务列表
-    // 3. 传输文件数据
-    // 4. 处理断点续传
-    
+bool FileSync::syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port, bool resume) {
+    LogUtil::info("Starting remote sync" + std::string(resume ? " (resume enabled)" : "") +
+                  ": " + srcDir + " -> " + host + ":" + std::to_string(port) + destDir);
+
     TcpClient client;
     if (!client.connect(host, port)) {
         LogUtil::error("Failed to connect to remote server");
         return false;
     }
-    
-    // 检测变化
+
     auto tasks = detectChanges(srcDir, destDir);
-    
+
     LogUtil::info("Found " + std::to_string(tasks.size()) + " tasks to sync");
-    
-    // 发送任务数量
+
     int taskCount = tasks.size();
     client.send(&taskCount, sizeof(taskCount));
-    
-    // 发送任务列表
+
     for (const auto& task : tasks) {
-        // 发送任务信息
-        // 1. 发送任务类型（0表示文件，1表示目录）
         int taskType = task.isDirectory ? 1 : 0;
         client.send(&taskType, sizeof(taskType));
-        
-        // 2. 发送源路径长度
+
         size_t srcPathLen = task.srcPath.length();
         client.send(&srcPathLen, sizeof(srcPathLen));
-        
-        // 3. 发送源路径
         client.send(task.srcPath.c_str(), srcPathLen);
-        
-        // 4. 发送目标路径长度
+
         size_t destPathLen = task.destPath.length();
         client.send(&destPathLen, sizeof(destPathLen));
-        
-        // 5. 发送目标路径
         client.send(task.destPath.c_str(), destPathLen);
-        
-        // 6. 发送文件权限
+
         client.send(&task.mode, sizeof(task.mode));
-        
-        // 7. 如果是文件，发送文件大小
+
         if (!task.isDirectory) {
             struct stat statbuf;
             if (LinuxFileUtil::getFileStat(task.srcPath, statbuf)) {
@@ -272,37 +255,56 @@ bool FileSync::syncRemote(const std::string& srcDir, const std::string& destDir,
             }
         }
     }
-    
-    // 传输文件
+
     for (const auto& task : tasks) {
         if (!task.isDirectory) {
-            // 获取文件大小
             struct stat statbuf;
             off_t fileSize = 0;
             if (LinuxFileUtil::getFileStat(task.srcPath, statbuf)) {
                 fileSize = statbuf.st_size;
             }
 
-            // 大文件且AsyncIOHandler可用时，使用异步IO发送
-            if (fileSize >= LARGE_FILE_THRESHOLD && asyncIOHandler && asyncIOHandler->isRunning()) {
+            off_t resumeOffset = 0;
+            if (resume) {
+                SyncProgress progress = loadProgress(task.destPath);
+                if (progress.offset > 0 && progress.totalSize > 0 && progress.offset < fileSize) {
+                    resumeOffset = progress.offset;
+                    LogUtil::info("Resuming remote file from offset " + std::to_string(resumeOffset) +
+                                  " (" + task.srcPath + ", " +
+                                  std::to_string(progress.offset) + "/" + std::to_string(progress.totalSize) + ")");
+                }
+            }
+
+            client.send(&resumeOffset, sizeof(resumeOffset));
+
+            bool useAsync = (fileSize >= LARGE_FILE_THRESHOLD && asyncIOHandler && asyncIOHandler->isRunning());
+
+            if (resumeOffset > 0 && useAsync) {
+                LogUtil::info("Resume with fallback to sync send for: " + task.srcPath);
+                useAsync = false;
+            }
+
+            if (useAsync) {
                 LogUtil::info("Using async IO for large file: " + task.srcPath);
                 if (!sendFileViaAsyncIO(task.srcPath, client.getSocketFd())) {
                     LogUtil::error("Async IO transfer failed, falling back to sync: " + task.srcPath);
-                    // 回退到同步发送
-                    if (!sendFileSync(task.srcPath, client)) {
+                    if (!sendFileSync(task.srcPath, task.destPath, client, resumeOffset)) {
                         client.disconnect();
                         return false;
                     }
                 }
             } else {
-                if (!sendFileSync(task.srcPath, client)) {
+                if (!sendFileSync(task.srcPath, task.destPath, client, resumeOffset)) {
                     client.disconnect();
                     return false;
                 }
             }
+        } else {
+            off_t zeroResume = 0;
+            client.send(&zeroResume, sizeof(zeroResume));
         }
     }
-    
+
     char ackBuffer[4] = {0};
     size_t ackReceived = client.receive(ackBuffer, 3);
     client.disconnect();
@@ -489,9 +491,9 @@ bool FileSync::transferFile(const std::string& srcPath, const std::string& destP
     if (srcFile.gcount() > 0) {
         destFile.write(buffer, srcFile.gcount());
         transferred += srcFile.gcount();
-        saveProgress(destPath, transferred, totalSize);
     }
     
+    std::remove(getProgressFilePath(destPath).c_str());
     return true;
 }
 
@@ -617,7 +619,7 @@ void FileSync::setAsyncIOHandler(AsyncIOHandler* handler) {
     asyncIOHandler = handler;
 }
 
-bool FileSync::sendFileSync(const std::string& srcPath, TcpClient& client) {
+bool FileSync::sendFileSync(const std::string& srcPath, const std::string& destPath, TcpClient& client, off_t resumeOffset) {
     std::ifstream srcFile(srcPath, std::ios::binary);
     if (!srcFile) {
         LogUtil::error("Failed to open source file: " + srcPath);
@@ -626,11 +628,11 @@ bool FileSync::sendFileSync(const std::string& srcPath, TcpClient& client) {
 
     srcFile.seekg(0, std::ios::end);
     off_t fileSize = srcFile.tellg();
-    srcFile.seekg(0);
+    srcFile.seekg(resumeOffset);
 
     const size_t bufferSize = 4096;
     char buffer[bufferSize];
-    off_t transferred = 0;
+    off_t transferred = resumeOffset;
 
     while (transferred < fileSize) {
         size_t bytesToRead = std::min(bufferSize, static_cast<size_t>(fileSize - transferred));
@@ -640,12 +642,19 @@ bool FileSync::sendFileSync(const std::string& srcPath, TcpClient& client) {
         if (bytesRead > 0) {
             if (!client.send(buffer, bytesRead)) {
                 LogUtil::error("Failed to send file data: " + srcPath);
+                saveProgress(destPath, transferred, fileSize);
                 return false;
             }
             transferred += bytesRead;
+            saveProgress(destPath, transferred, fileSize);
+
+            if (speedLimit > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(bufferSize * 1000 / speedLimit));
+            }
         }
     }
 
+    std::remove(getProgressFilePath(destPath).c_str());
     return true;
 }
 

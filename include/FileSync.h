@@ -37,7 +37,7 @@ public:
 
     bool syncLocal(const std::string& srcDir, const std::string& destDir, bool recursive = true);
 
-    bool syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port);
+    bool syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port, bool resume = false);
 
     std::vector<SyncTask> detectChanges(const std::string& srcDir, const std::string& destDir);
 
@@ -92,7 +92,7 @@ private:
 
     bool sendFileViaAsyncIO(const std::string& srcPath, int sockfd);
 
-    bool sendFileSync(const std::string& srcPath, class TcpClient& client);
+    bool sendFileSync(const std::string& srcPath, const std::string& destPath, class TcpClient& client, off_t resumeOffset = 0);
 
     std::string calculateFileMD5(const std::string& path);
 

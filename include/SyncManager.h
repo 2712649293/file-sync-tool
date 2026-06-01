@@ -22,7 +22,7 @@ public:
     bool syncLocal(const std::string& srcDir, const std::string& destDir, bool recursive = true);
     
     // 同步远程目录
-    bool syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port);
+    bool syncRemote(const std::string& srcDir, const std::string& destDir, const std::string& host, int port, bool resume = false);
     
     // 断点续传
     bool resumeSync(const std::string& srcPath, const std::string& destPath);

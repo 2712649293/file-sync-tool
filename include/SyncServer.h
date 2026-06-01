@@ -16,6 +16,7 @@ struct ServerSyncTask {
     bool isDirectory;
     mode_t mode;
     off_t fileSize;
+    off_t resumeOffset;
 };
 
 class SyncServer {
@@ -39,7 +40,7 @@ private:
     bool receiveTaskMetadata(int clientSock, int taskCount,
                              std::vector<ServerSyncTask>& tasks);
 
-    bool receiveFileData(int clientSock, const ServerSyncTask& task);
+    bool receiveFileData(int clientSock, const ServerSyncTask& task, off_t resumeOffset = 0);
 
     bool sendAck(int clientSock, bool success);
 

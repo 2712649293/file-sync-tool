@@ -9,6 +9,7 @@
 class TcpServer;
 class ThreadPool;
 class AsyncIOHandler;
+class RpcServer;
 
 struct ServerSyncTask {
     std::string destPath;
@@ -59,6 +60,7 @@ private:
     TcpServer* tcpServer;
     ThreadPool* threadPool;
     AsyncIOHandler* asyncIOHandler;
+    RpcServer* rpcServer;
 
     std::string baseDirectory;
 

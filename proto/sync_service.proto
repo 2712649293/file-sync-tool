@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+package synctool.rpc;
+
+// ============================================================
+// list_files RPC
+// ============================================================
+
+// 列出目录下的文件列表
+message ListFilesRequest {
+  string directory = 1;   // 要列出的目录路径（相对于服务器 base 目录）
+  bool recursive = 2;     // 是否递归列出子目录
+}
+
+// 单个文件条目
+message FileEntry {
+  string name = 1;         // 文件名
+  string path = 2;         // 相对路径
+  bool is_directory = 3;   // 是否为目录
+  int64 size = 4;          // 文件大小（字节）
+  int64 mtime = 5;         // 最后修改时间（Unix 时间戳）
+  uint32 mode = 6;         // 文件权限模式
+}
+
+// 列出文件的响应
+message ListFilesResponse {
+  repeated FileEntry files = 1;  // 文件列表
+  string directory = 2;          // 请求的目录路径
+  int32 total_count = 3;         // 总文件数
+}
+
+// ============================================================
+// get_file_meta RPC
+// ============================================================
+
+// 获取文件元数据请求
+message GetFileMetaRequest {
+  string file_path = 1;  // 文件路径（相对于服务器 base 目录）
+}
+
+// 文件元数据
+message FileMeta {
+  string name = 1;          // 文件名
+  string path = 2;          // 完整路径
+  int64 size = 3;           // 文件大小（字节）
+  int64 mtime = 4;          // 最后修改时间（Unix 时间戳）
+  int64 ctime = 5;          // 创建时间（Unix 时间戳）
+  uint32 mode = 6;          // 文件权限模式
+  string md5 = 7;           // 文件 MD5 校验和
+  bool is_directory = 8;    // 是否为目录
+  bool exists = 9;          // 文件是否存在
+}
+
+// 获取文件元数据响应
+message GetFileMetaResponse {
+  FileMeta meta = 1;        // 文件元数据
+  bool success = 2;         // 操作是否成功
+  string error = 3;         // 错误信息（失败时）
+}
+
+// ============================================================
+// RPC 请求/响应封装
+// ============================================================
+
+// RPC 请求类型枚举
+enum RpcType {
+  RPC_UNKNOWN = 0;
+  RPC_LIST_FILES = 1;
+  RPC_GET_FILE_META = 2;
+}
+
+// RPC 请求包装
+message RpcRequest {
+  RpcType type = 1;
+  oneof payload {
+    ListFilesRequest list_files = 10;
+    GetFileMetaRequest get_file_meta = 11;
+  }
+}
+
+// RPC 响应包装
+message RpcResponse {
+  RpcType type = 1;
+  bool success = 2;
+  string error = 3;
+  oneof payload {
+    ListFilesResponse list_files = 10;
+    GetFileMetaResponse get_file_meta = 11;
+  }
+}

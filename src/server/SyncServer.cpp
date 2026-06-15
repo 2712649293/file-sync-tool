@@ -2,6 +2,7 @@
 #include "TcpServer.h"
 #include "ThreadPool.h"
 #include "AsyncIOHandler.h"
+#include "rpc/RpcServer.h"
 #include "LinuxFileUtil.h"
 #include "LogUtil.h"
 
@@ -21,6 +22,7 @@ SyncServer::SyncServer()
     : tcpServer(nullptr)
     , threadPool(nullptr)
     , asyncIOHandler(nullptr)
+    , rpcServer(nullptr)
     , running(false)
     , processedTasks(0) {
 }
@@ -34,6 +36,7 @@ SyncServer::~SyncServer() {
     delete tcpServer;
     delete threadPool;
     delete asyncIOHandler;
+    delete rpcServer;
 }
 
 /**
@@ -59,6 +62,10 @@ bool SyncServer::start(int port, size_t threadCount) {
     threadPool = new ThreadPool(threadCount);
     asyncIOHandler = new AsyncIOHandler();
     asyncIOHandler->start();
+
+    // 创建 RPC 服务器
+    rpcServer = new RpcServer();
+    rpcServer->setBaseDirectory(baseDirectory);
 
     // 设置运行状态
     running.store(true);
@@ -196,6 +203,29 @@ size_t SyncServer::getProcessedTaskCount() const {
  */
 bool SyncServer::handleClient(int clientSock) {
     LogUtil::info("Handling client connection: fd=" + std::to_string(clientSock));
+
+    // 接收模式字节：0 = 同步模式，1 = RPC 模式
+    uint8_t mode;
+    if (!receiveBytes(clientSock, &mode, sizeof(mode))) {
+        LogUtil::error("Failed to receive mode byte from client");
+        tcpServer->closeClient(clientSock);
+        return false;
+    }
+
+    if (mode == 1) {
+        // RPC 模式
+        LogUtil::info("Client entered RPC mode, fd=" + std::to_string(clientSock));
+        return rpcServer->handleRpcClient(clientSock);
+    }
+
+    if (mode != 0) {
+        LogUtil::error("Unknown mode byte: " + std::to_string(mode));
+        tcpServer->closeClient(clientSock);
+        return false;
+    }
+
+    // 同步模式：原有流程
+    LogUtil::info("Client entered sync mode, fd=" + std::to_string(clientSock));
 
     // 接收任务数量
     int taskCount = 0;

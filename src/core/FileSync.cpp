@@ -230,6 +230,10 @@ bool FileSync::syncRemote(const std::string& srcDir, const std::string& destDir,
 
     LogUtil::info("Found " + std::to_string(tasks.size()) + " tasks to sync");
 
+    // 发送模式字节：0 = 同步模式
+    uint8_t mode = 0;
+    client.send(&mode, sizeof(mode));
+
     int taskCount = tasks.size();
     client.send(&taskCount, sizeof(taskCount));
 

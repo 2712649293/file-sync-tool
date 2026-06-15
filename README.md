@@ -248,6 +248,7 @@ sync-tool/
 | 8 | 错误处理 | 缺参数、不存在的源目录 |
 | 9 | 大文件 | 15MB 文件触发异步 IO 路径，MD5 校验 |
 | 10 | CLI | --help / --version |
+| 11 | RPC | listFiles / getFileMeta 远程调用 |
 
 ### 最新测试结果
 
@@ -303,6 +304,61 @@ sync-tool/
   Results: 23 passed, 0 failed
 ==============================================
 ```
+
+## Protobuf RPC 接口
+
+服务端在 RPC 模式下支持通过 Protocol Buffers 进行远程调用，提供文件元数据查询接口。
+
+### Proto 定义
+
+```protobuf
+// proto/sync_service.proto
+service SyncService {
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+  rpc GetFileMeta(GetFileMetaRequest) returns (GetFileMetaResponse);
+}
+```
+
+### RPC 调用示例
+
+```cpp
+#include "rpc/RpcClient.h"
+
+RpcClient client;
+client.connect("192.168.1.100", 8888);
+
+// 列出服务器目录
+synctool::rpc::ListFilesResponse listResp;
+client.listFiles("documents", true, listResp);
+for (const auto& f : listResp.files()) {
+    std::cout << f.path() << " (" << f.size() << " bytes)" << std::endl;
+}
+
+// 获取文件元数据
+synctool::rpc::GetFileMetaResponse metaResp;
+client.getFileMeta("file.txt", metaResp);
+if (metaResp.meta().exists()) {
+    std::cout << "MD5: " << metaResp.meta().md5() << std::endl;
+    std::cout << "Size: " << metaResp.meta().size() << std::endl;
+}
+```
+
+### RPC 协议
+
+```
+请求: type(4 bytes) + payload_length(4 bytes) + serialized_protobuf
+响应: type(4 bytes) + payload_length(4 bytes) + serialized_protobuf
+
+RPC类型:
+  1 = RPC_LIST_FILES
+  2 = RPC_GET_FILE_META
+```
+
+### 依赖
+
+- Protocol Buffers 3.x (`libprotobuf`)
+- 编译时需指定 `PROTOBUF_ROOT` 或在 `CMakeLists.txt` 中配置路径
+- 默认路径: `/usr/local/protobuf`
 
 ## 许可证
 
